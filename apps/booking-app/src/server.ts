@@ -1,15 +1,24 @@
 import express from "express";
 import { healthRouter } from "./routes/health";
 import { probeRouter } from "./routes/probe";
+import { adminRouter } from "./routes/admin";
+import { requireAdminKey } from "./middleware/auth";
+import { corsMiddleware } from "./middleware/cors";
 
 const app = express();
 const port = parseInt(process.env.PORT || "3100", 10);
 
 app.use(express.json());
 
-// Routes
+// Health & probe (no auth)
 app.use("/api/health", healthRouter);
 app.use("/api/probe", probeRouter);
+
+// Admin routes (admin key required)
+app.use("/api/admin", requireAdminKey, adminRouter);
+
+// Public routes will be added in Tasks 7-8
+// app.use("/api/v1", corsMiddleware, requirePublicKey, ...);
 
 // Catch-all 404
 app.use((_req, res) => {
