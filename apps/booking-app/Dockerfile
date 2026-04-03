@@ -11,7 +11,12 @@ COPY apps/booking-app ./apps/booking-app
 COPY packages ./packages
 
 # Install all workspace dependencies
-RUN YARN_ENABLE_IMMUTABLE_INSTALLS=false yarn install
+# YARN_ENABLE_SCRIPTS=false skips postinstall scripts that fail in Docker
+# (cal.com's root postinstall needs env vars and tools not available at build time)
+RUN YARN_ENABLE_IMMUTABLE_INSTALLS=false YARN_ENABLE_SCRIPTS=false yarn install
+
+# Run only the scripts we actually need
+RUN yarn workspace @calcom/prisma postinstall || true
 
 # Generate Prisma client from schema
 RUN yarn workspace @calcom/prisma generate
