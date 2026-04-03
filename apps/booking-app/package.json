@@ -1,0 +1,28 @@
+{
+  "name": "booking-app",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 3100",
+    "build": "next build",
+    "start": "next start --port 3100",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@calcom/app-store": "*",
+    "@calcom/dayjs": "*",
+    "@calcom/features": "*",
+    "@calcom/lib": "*",
+    "@calcom/prisma": "*",
+    "@calcom/types": "*",
+    "next": "*",
+    "react": "*",
+    "react-dom": "*"
+  },
+  "devDependencies": {
+    "@calcom/tsconfig": "*",
+    "@types/node": "^20.0.0",
+    "@types/react": "*",
+    "typescript": "^5.9.0"
+  }
+}
