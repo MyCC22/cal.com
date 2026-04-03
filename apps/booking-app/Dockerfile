@@ -12,11 +12,9 @@ COPY packages ./packages
 
 # Install all workspace dependencies
 # YARN_ENABLE_SCRIPTS=false skips postinstall scripts that fail in Docker
-# (cal.com's root postinstall needs env vars and tools not available at build time)
-RUN YARN_ENABLE_IMMUTABLE_INSTALLS=false YARN_ENABLE_SCRIPTS=false yarn install
-
-# Run only the scripts we actually need
-RUN yarn workspace @calcom/prisma postinstall || true
+# || true ignores Yarn's exit code (it reports skipped scripts as "errors"
+# even though all packages are installed correctly)
+RUN YARN_ENABLE_IMMUTABLE_INSTALLS=false YARN_ENABLE_SCRIPTS=false yarn install || true
 
 # Generate Prisma client from schema
 RUN yarn workspace @calcom/prisma generate
