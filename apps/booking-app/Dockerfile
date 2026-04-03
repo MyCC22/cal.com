@@ -49,5 +49,6 @@ EXPOSE 3100
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD wget --spider http://localhost:3100/api/health || exit 1
 
-# Run next start directly, bypassing Turbo/Yarn workspace resolution
-CMD ["node", "node_modules/next/dist/bin/next", "start", "--port", "3100"]
+# Use custom start.js that starts Next.js via its internal API
+# This bypasses Turbo/Yarn CLI wrappers completely
+CMD ["node", "start.js"]
