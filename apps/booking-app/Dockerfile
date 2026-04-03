@@ -37,10 +37,8 @@ ENV HOSTNAME=0.0.0.0
 # Copy everything needed to run
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/yarn.lock ./yarn.lock
-COPY --from=builder /app/.yarnrc.yml ./.yarnrc.yml
-COPY --from=builder /app/.yarn ./.yarn
-COPY --from=builder /app/turbo.json ./turbo.json
+# NOTE: Do NOT copy turbo.json or .yarn — Turbo intercepts node commands
+# and tries to resolve @calcom/web#start which doesn't exist here
 COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/apps/booking-app ./apps/booking-app
 
