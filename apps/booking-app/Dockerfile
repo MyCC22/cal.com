@@ -13,18 +13,12 @@ COPY .yarn ./.yarn
 COPY apps/booking-app ./apps/booking-app
 COPY packages ./packages
 
-# Install dependencies (skip postinstall scripts that fail outside full monorepo)
+# Install dependencies — || true because YARN_ENABLE_SCRIPTS=false causes
+# warnings that Yarn treats as errors, but the install itself succeeds
 RUN YARN_ENABLE_IMMUTABLE_INSTALLS=false YARN_ENABLE_SCRIPTS=false yarn install || true
 
-# Generate Prisma client
-RUN npx prisma generate --schema=packages/prisma/schema.prisma || true
-
-# Compile TypeScript → dist/
-WORKDIR /app/apps/booking-app
-RUN npx tsc || true
-
-# Verify dist was created
-RUN ls -la dist/server.js 2>/dev/null || echo "WARNING: dist/server.js not found!"
+# Prisma client generation is critical — fail the build if this fails
+RUN npx prisma generate --schema=packages/prisma/schema.prisma
 
 # --- Production runner ---
 FROM node:20-alpine AS runner
@@ -35,20 +29,24 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3100
 
-# Copy node_modules, packages, and compiled app
+# Copy node_modules, packages, and source (tsx runs TS directly)
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/packages ./packages
-COPY --from=builder /app/apps/booking-app/dist ./apps/booking-app/dist
-COPY --from=builder /app/apps/booking-app/package.json ./apps/booking-app/package.json
+COPY --from=builder /app/apps/booking-app ./apps/booking-app
 
-# Minimal root package.json
+# Minimal root package.json to prevent Yarn workspace interference
 RUN echo '{"name":"booking-app-runner","private":true}' > ./package.json
 
 WORKDIR /app/apps/booking-app
 
 EXPOSE 3100
 
-HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+# start-period gives tsx time to transpile @calcom packages on first load
+HEALTHCHECK --start-period=60s --interval=30s --timeout=10s --retries=3 \
   CMD wget --spider http://localhost:3100/api/health || exit 1
 
-CMD ["node", "dist/server.js"]
+# Verify tsx exists at the hoisted location (Yarn hoists to root node_modules)
+RUN test -f /app/node_modules/.bin/tsx || (echo "ERROR: tsx not found at /app/node_modules/.bin/tsx" && exit 1)
+
+# Use absolute path — Yarn hoists tsx to /app/node_modules, not /app/apps/booking-app/node_modules
+CMD ["/app/node_modules/.bin/tsx", "src/server.ts"]

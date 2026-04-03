@@ -3,9 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/server.js",
-    "dev": "ts-node src/server.ts"
+    "start": "tsx src/server.ts",
+    "dev": "tsx --watch src/server.ts"
   },
   "dependencies": {
     "@calcom/app-store": "*",
@@ -14,7 +13,8 @@
     "@calcom/lib": "*",
     "@calcom/prisma": "*",
     "@calcom/types": "*",
-    "express": "^4.21.0"
+    "express": "^4.21.0",
+    "tsx": "^4.19.0"
   },
   "devDependencies": {
     "@calcom/tsconfig": "*",
