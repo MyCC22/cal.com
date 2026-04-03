@@ -17,7 +17,7 @@ COPY packages ./packages
 RUN YARN_ENABLE_IMMUTABLE_INSTALLS=false YARN_ENABLE_SCRIPTS=false yarn install || true
 
 # Generate Prisma client from schema
-RUN yarn workspace @calcom/prisma generate
+RUN npx prisma generate --schema=packages/prisma/schema.prisma || true
 
 # Build booking-app with Webpack bundler
 # The || true ignores the /_global-error prerender crash (Next.js 16 bug).
