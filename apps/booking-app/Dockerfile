@@ -31,11 +31,16 @@ FROM node:20-alpine AS runner
 
 WORKDIR /app
 ENV NODE_ENV=production
+ENV PORT=3100
+ENV HOSTNAME=0.0.0.0
 
-# Copy everything needed to run: node_modules, packages, and built app
+# Copy everything needed to run
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/yarn.lock ./yarn.lock
 COPY --from=builder /app/.yarnrc.yml ./.yarnrc.yml
+COPY --from=builder /app/.yarn ./.yarn
+COPY --from=builder /app/turbo.json ./turbo.json
 COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/apps/booking-app ./apps/booking-app
 
@@ -46,4 +51,5 @@ EXPOSE 3100
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD wget --spider http://localhost:3100/api/health || exit 1
 
-CMD ["npx", "next", "start", "--port", "3100"]
+# Use node directly with the next start script to avoid npx resolution issues
+CMD ["node", "node_modules/.bin/next", "start", "--port", "3100"]
