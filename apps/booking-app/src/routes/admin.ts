@@ -63,26 +63,30 @@ adminRouter.post("/schedules", async (req, res) => {
       });
     }
 
-    const schedule = await prisma.schedule.create({
-      data: {
-        userId,
-        name,
-        timeZone: timeZone || "America/Los_Angeles",
-        availability: {
-          create: availability.map((a: { days: number[]; startTime: string; endTime: string }) => ({
-            days: a.days,
-            startTime: new Date(`1970-01-01T${a.startTime}:00.000Z`),
-            endTime: new Date(`1970-01-01T${a.endTime}:00.000Z`),
-          })),
+    const schedule = await prisma.$transaction(async (tx) => {
+      const s = await tx.schedule.create({
+        data: {
+          userId,
+          name,
+          timeZone: timeZone || "America/Los_Angeles",
+          availability: {
+            create: availability.map((a: { days: number[]; startTime: string; endTime: string }) => ({
+              days: a.days,
+              startTime: new Date(`1970-01-01T${a.startTime}:00.000Z`),
+              endTime: new Date(`1970-01-01T${a.endTime}:00.000Z`),
+            })),
+          },
         },
-      },
-      include: { availability: true },
-    });
+        include: { availability: true },
+      });
 
-    // Set as user's default schedule
-    await prisma.user.update({
-      where: { id: userId },
-      data: { defaultScheduleId: schedule.id },
+      // Set as user's default schedule (atomic with creation)
+      await tx.user.update({
+        where: { id: userId },
+        data: { defaultScheduleId: s.id },
+      });
+
+      return s;
     });
 
     res.json({ status: "success", data: { id: schedule.id, name: schedule.name, timeZone: schedule.timeZone } });

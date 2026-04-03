@@ -32,7 +32,7 @@ bookingsRouter.post("/", async (req, res) => {
     const startTime = dayjs(start).utc().toDate();
     const endTime = dayjs(start).add(eventType.length, "minute").utc().toDate();
 
-    // Race condition protection: transaction with conflict check
+    // Race condition protection: serializable transaction with conflict check
     const booking = await prisma.$transaction(async (tx) => {
       // Check for overlapping bookings
       const conflict = await tx.booking.findFirst({
@@ -78,7 +78,7 @@ bookingsRouter.post("/", async (req, res) => {
           attendees: { select: { name: true, email: true, timeZone: true } },
         },
       });
-    });
+    }, { isolationLevel: 'Serializable' });
 
     res.json({ status: "success", data: booking });
   } catch (error: unknown) {
@@ -180,11 +180,15 @@ bookingsRouter.post("/:uid/reschedule", async (req, res) => {
       return res.status(404).json({ status: "error", code: "NOT_FOUND", message: "Booking not found" });
     }
 
+    if (oldBooking.status === "CANCELLED") {
+      return res.status(400).json({ status: "error", code: "VALIDATION_ERROR", message: "Cannot reschedule a cancelled booking" });
+    }
+
     const startTime = dayjs(start).utc().toDate();
     const endTime = dayjs(start).add(oldBooking.eventType.length, "minute").utc().toDate();
     const attendee = oldBooking.attendees[0];
 
-    // Create new booking + cancel old one in a transaction
+    // Create new booking + cancel old one in a serializable transaction
     const newBooking = await prisma.$transaction(async (tx) => {
       // Check conflicts for new time
       const conflict = await tx.booking.findFirst({
@@ -227,7 +231,7 @@ bookingsRouter.post("/:uid/reschedule", async (req, res) => {
           attendees: { select: { name: true, email: true, timeZone: true } },
         },
       });
-    });
+    }, { isolationLevel: 'Serializable' });
 
     res.json({ status: "success", data: newBooking });
   } catch (error: unknown) {

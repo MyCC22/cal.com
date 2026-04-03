@@ -1,5 +1,4 @@
 import dayjs from "@calcom/dayjs";
-import type { Dayjs } from "@calcom/dayjs";
 import getSlots from "@calcom/features/schedules/lib/slots";
 import { buildDateRanges } from "@calcom/features/schedules/lib/date-ranges";
 import type { WorkingHours } from "@calcom/features/schedules/lib/date-ranges";
@@ -84,7 +83,7 @@ export async function getAvailableSlots(input: GetAvailableSlotsInput) {
   const existingBookings = await prisma.booking.findMany({
     where: {
       userId: hostUserId,
-      eventTypeId,
+      // No eventTypeId filter — host is busy regardless of which event type
       startTime: { lt: dateTo.toDate() },
       endTime: { gt: dateFrom.toDate() },
       status: { in: ["ACCEPTED", "PENDING"] },
