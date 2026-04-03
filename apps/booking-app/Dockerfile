@@ -34,15 +34,19 @@ ENV NODE_ENV=production
 ENV PORT=3100
 ENV HOSTNAME=0.0.0.0
 
-# Copy everything needed to run
+# Copy node_modules, packages, and built app
 COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./package.json
-# NOTE: Do NOT copy turbo.json or .yarn — Turbo intercepts node commands
-# and tries to resolve @calcom/web#start which doesn't exist here
 COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/apps/booking-app ./apps/booking-app
 
+# Create a minimal package.json that does NOT reference Turbo or workspace scripts
+# The root cal.com package.json has "start": "turbo run start" which Turbo intercepts
+RUN echo '{"name":"booking-app-runner","private":true}' > ./package.json
+
 WORKDIR /app/apps/booking-app
+
+# Also remove turbo from node_modules to fully prevent interception
+RUN rm -rf /app/node_modules/.bin/turbo /app/node_modules/turbo 2>/dev/null || true
 
 EXPOSE 3100
 
