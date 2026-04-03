@@ -51,5 +51,5 @@ EXPOSE 3100
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD wget --spider http://localhost:3100/api/health || exit 1
 
-# Use node directly with the next start script to avoid npx resolution issues
-CMD ["node", "node_modules/.bin/next", "start", "--port", "3100"]
+# Run next start directly, bypassing Turbo/Yarn workspace resolution
+CMD ["node", "node_modules/next/dist/bin/next", "start", "--port", "3100"]
