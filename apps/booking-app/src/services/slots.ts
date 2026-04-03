@@ -85,8 +85,8 @@ export async function getAvailableSlots(input: GetAvailableSlotsInput) {
     where: {
       userId: hostUserId,
       eventTypeId,
-      startTime: { gte: dateFrom.toDate() },
-      endTime: { lte: dateTo.toDate() },
+      startTime: { lt: dateTo.toDate() },
+      endTime: { gt: dateFrom.toDate() },
       status: { in: ["ACCEPTED", "PENDING"] },
     },
     select: { startTime: true, endTime: true },

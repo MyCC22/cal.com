@@ -25,7 +25,7 @@ app.use("/api/v1/bookings", corsMiddleware, requirePublicKey, bookingsRouter);
 
 // Catch-all 404
 app.use((_req, res) => {
-  res.status(404).json({ error: "not_found" });
+  res.status(404).json({ status: "error", code: "NOT_FOUND", message: "Route not found" });
 });
 
 app.listen(port, "0.0.0.0", () => {
