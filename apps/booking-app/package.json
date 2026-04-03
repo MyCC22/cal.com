@@ -3,10 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --port 3100",
-    "build": "next build",
-    "start": "next start --port 3100",
-    "type-check": "tsc --noEmit"
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "ts-node src/server.ts"
   },
   "dependencies": {
     "@calcom/app-store": "*",
@@ -15,14 +14,12 @@
     "@calcom/lib": "*",
     "@calcom/prisma": "*",
     "@calcom/types": "*",
-    "next": "*",
-    "react": "*",
-    "react-dom": "*"
+    "express": "^4.21.0"
   },
   "devDependencies": {
     "@calcom/tsconfig": "*",
+    "@types/express": "^4.17.21",
     "@types/node": "^20.0.0",
-    "@types/react": "*",
     "typescript": "^5.9.0"
   }
 }

@@ -1,6 +1,30 @@
-import { NextResponse } from "next/server";
+import { Router } from "express";
 
-export async function GET() {
+export const probeRouter = Router();
+
+// Test @calcom/prisma import + DB connectivity
+probeRouter.get("/prisma", async (_req, res) => {
+  try {
+    const prisma = (await import("@calcom/prisma")).default;
+
+    let dbStatus = "not_connected";
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      dbStatus = "connected";
+    } catch (dbError: unknown) {
+      const message = dbError instanceof Error ? dbError.message : "unknown error";
+      dbStatus = `connection_failed: ${message}`;
+    }
+
+    res.json({ prismaImport: "success", dbStatus });
+  } catch (importError: unknown) {
+    const message = importError instanceof Error ? importError.message : "unknown error";
+    res.status(500).json({ prismaImport: "failed", error: message });
+  }
+});
+
+// Test @calcom/features DI container imports
+probeRouter.get("/features", async (_req, res) => {
   const results: Record<string, string> = {};
 
   try {
@@ -29,8 +53,8 @@ export async function GET() {
 
   const allPassed = Object.values(results).every((v) => v.startsWith("success"));
 
-  return NextResponse.json({
+  res.json({
     overall: allPassed ? "all_passed" : "some_failed",
     results,
   });
-}
+});
