@@ -11,6 +11,7 @@ const app = express();
 const port = parseInt(process.env.PORT || "3100", 10);
 
 app.use(express.json());
+app.use(corsMiddleware);
 
 // Health & probe (no auth)
 app.use("/api/health", healthRouter);
@@ -19,9 +20,9 @@ app.use("/api/probe", probeRouter);
 // Admin routes (admin key required)
 app.use("/api/admin", requireAdminKey, adminRouter);
 
-// Public routes (CORS + public key)
-app.use("/api/v1/slots", corsMiddleware, requirePublicKey, slotsRouter);
-app.use("/api/v1/bookings", corsMiddleware, requirePublicKey, bookingsRouter);
+// Public routes (public key)
+app.use("/api/v1/slots", requirePublicKey, slotsRouter);
+app.use("/api/v1/bookings", requirePublicKey, bookingsRouter);
 
 // Catch-all 404
 app.use((_req, res) => {
