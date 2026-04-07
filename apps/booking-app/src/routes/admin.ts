@@ -88,13 +88,24 @@ adminRouter.patch("/users/:id", async (req, res) => {
   }
 
   // defaultScheduleId: null clears the pointer; a positive integer sets it.
-  // FK violation (unknown schedule id) is caught below as P2003 → INVALID_REFERENCE.
+  // cal.com's schema declares `defaultScheduleId Int?` WITHOUT a Prisma
+  // @relation, so Postgres has no foreign key constraint and unknown IDs
+  // are silently accepted. We add an explicit existence check here.
   if (
     defaultScheduleId !== undefined &&
     defaultScheduleId !== null &&
     !isPositiveInt(defaultScheduleId)
   ) {
     return errorResponse(res, 400, "VALIDATION_ERROR", "defaultScheduleId must be a positive integer or null");
+  }
+  if (typeof defaultScheduleId === "number") {
+    const exists = await prisma.schedule.findUnique({
+      where: { id: defaultScheduleId },
+      select: { id: true },
+    });
+    if (!exists) {
+      return errorResponse(res, 400, "INVALID_REFERENCE", "defaultScheduleId references an unknown schedule");
+    }
   }
 
   const data: Record<string, unknown> = {};
