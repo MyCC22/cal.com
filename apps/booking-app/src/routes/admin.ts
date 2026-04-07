@@ -98,14 +98,20 @@ adminRouter.delete("/users/:id", async (req, res) => {
       const user = await tx.user.findUnique({ where: { id }, select: { id: true } });
       if (!user) return { notFound: true as const };
 
-      const [bookings, schedules, eventTypes] = await Promise.all([
+      // NOTE: We also count Host rows where userId = :id. Today this is
+      // covered transitively by `eventTypes` (POST /event-types only creates
+      // self-hosts), but checking explicitly future-proofs against any
+      // future code path that lets a user be a host on event types they
+      // don't own.
+      const [bookings, schedules, eventTypes, hosts] = await Promise.all([
         tx.booking.count({ where: { userId: id, status: { not: "CANCELLED" } } }),
         tx.schedule.count({ where: { userId: id } }),
         tx.eventType.count({ where: { userId: id } }),
+        tx.host.count({ where: { userId: id } }),
       ]);
 
-      if (bookings + schedules + eventTypes > 0) {
-        return { blockers: { bookings, schedules, eventTypes } };
+      if (bookings + schedules + eventTypes + hosts > 0) {
+        return { blockers: { bookings, schedules, eventTypes, hosts } };
       }
 
       await tx.user.delete({ where: { id } });

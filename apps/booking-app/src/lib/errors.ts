@@ -29,7 +29,21 @@ export function parseId(raw: string): number | null {
 /**
  * Maps a Prisma P2002 unique-violation error onto a specific
  * application code based on the constraint that fired.
- * Returns null if the error is not P2002 or doesn't match a known field.
+ *
+ * Primary path: inspects e.code === "P2002" and e.meta.target.
+ *
+ * Fallback path: some Prisma versions / interactive transactions wrap the
+ * error such that e.code and e.meta are not present at the top level. In
+ * that case we sniff the message string for "Unique constraint failed".
+ * This is a deliberate deviation from the original spec ("returns null if
+ * not P2002") because without it, slug/email/username collisions inside
+ * $transaction(...) silently degrade to generic 500s. Pinned to current
+ * Prisma 6.x message format — if Prisma changes this string in a future
+ * upgrade, the fallback stops working and collisions return 500 again
+ * (degraded but not catastrophic).
+ *
+ * Returns null if the error is not a unique violation or doesn't match a
+ * known field.
  */
 export function uniqueViolationCode(error: unknown): string | null {
   if (typeof error !== "object" || error === null) return null;
