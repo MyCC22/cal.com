@@ -1,6 +1,5 @@
 // apps/booking-app/tests/setup.ts
 import { beforeEach, vi } from "vitest";
-import type { MockPrisma } from "./helpers/mockPrisma";
 
 // Test-time env vars. Set BEFORE importing any app module so
 // validateConfig / isProduction see the right values.
@@ -58,8 +57,10 @@ vi.mock("@calcom/prisma", () => ({
 }));
 
 // Re-export so tests can `import { mockPrisma } from "../setup"`.
+// The type is derived from the actual runtime shape so it cannot drift
+// from the inline mock above.
 export { mockPrisma };
-export type MockPrismaShape = typeof mockPrisma;
+export type MockPrisma = typeof mockPrisma;
 
 // Silence expected console output from internalError so test output stays readable.
 // Individual tests can spy on console.error themselves if they need to assert on it.
