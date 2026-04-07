@@ -1,7 +1,7 @@
 // apps/booking-app/src/routes/admin.ts
 import { Router } from "express";
 import prisma from "../lib/prisma";
-import { errorResponse, parseId, uniqueViolationCode, isSerializationFailure, isNonEmptyString, isPositiveInt, internalError, withinMaxLength, FIELD_LIMITS } from "../lib/errors";
+import { errorResponse, parseId, uniqueViolationCode, isSerializationFailure, isNonEmptyString, isPositiveInt, internalError, withinMaxLength, FIELD_LIMITS, isValidEmail, isValidAvailabilityWindow } from "../lib/errors";
 
 export const adminRouter = Router();
 
@@ -10,8 +10,8 @@ export const adminRouter = Router();
 adminRouter.post("/users", async (req, res) => {
   const { email, name, timeZone } = req.body || {};
 
-  if (!isNonEmptyString(email) || !withinMaxLength(email, FIELD_LIMITS.email))
-    return errorResponse(res, 400, "VALIDATION_ERROR", "email is required (1–320 chars)");
+  if (!isNonEmptyString(email) || !withinMaxLength(email, FIELD_LIMITS.email) || !isValidEmail(email))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "email is required (1–320 chars, valid format)");
   if (!isNonEmptyString(name) || !withinMaxLength(name, FIELD_LIMITS.name))
     return errorResponse(res, 400, "VALIDATION_ERROR", "name is required (1–200 chars)");
   if (timeZone !== undefined && (!isNonEmptyString(timeZone) || !withinMaxLength(timeZone, FIELD_LIMITS.timeZone)))
@@ -58,22 +58,51 @@ adminRouter.patch("/users/:id", async (req, res) => {
   const id = parseId(req.params.id);
   if (id === null) return errorResponse(res, 400, "VALIDATION_ERROR", "id must be a positive integer");
 
-  const { email, name, timeZone, username } = req.body || {};
+  const { email, name, timeZone, username, defaultScheduleId } = req.body || {};
 
-  if (email !== undefined && !isNonEmptyString(email))
-    return errorResponse(res, 400, "VALIDATION_ERROR", "email must be a non-empty string");
-  if (name !== undefined && !isNonEmptyString(name))
-    return errorResponse(res, 400, "VALIDATION_ERROR", "name must be a non-empty string");
-  if (timeZone !== undefined && !isNonEmptyString(timeZone))
-    return errorResponse(res, 400, "VALIDATION_ERROR", "timeZone must be a non-empty string");
-  if (username !== undefined && !isNonEmptyString(username))
-    return errorResponse(res, 400, "VALIDATION_ERROR", "username must be a non-empty string");
+  // String field validators: length-first then format, so oversized input
+  // is rejected in O(1) before any regex runs (avoids ReDoS / CPU DoS).
+  if (
+    email !== undefined &&
+    (!isNonEmptyString(email) || !withinMaxLength(email, FIELD_LIMITS.email) || !isValidEmail(email))
+  ) {
+    return errorResponse(res, 400, "VALIDATION_ERROR", `email must be a valid email (1–${FIELD_LIMITS.email} chars)`);
+  }
+  if (
+    name !== undefined &&
+    (!isNonEmptyString(name) || !withinMaxLength(name, FIELD_LIMITS.name))
+  ) {
+    return errorResponse(res, 400, "VALIDATION_ERROR", `name must be a non-empty string ≤ ${FIELD_LIMITS.name} chars`);
+  }
+  if (
+    timeZone !== undefined &&
+    (!isNonEmptyString(timeZone) || !withinMaxLength(timeZone, FIELD_LIMITS.timeZone))
+  ) {
+    return errorResponse(res, 400, "VALIDATION_ERROR", `timeZone must be a non-empty string ≤ ${FIELD_LIMITS.timeZone} chars`);
+  }
+  if (
+    username !== undefined &&
+    (!isNonEmptyString(username) || !withinMaxLength(username, FIELD_LIMITS.username))
+  ) {
+    return errorResponse(res, 400, "VALIDATION_ERROR", `username must be a non-empty string ≤ ${FIELD_LIMITS.username} chars`);
+  }
+
+  // defaultScheduleId: null clears the pointer; a positive integer sets it.
+  // FK violation (unknown schedule id) is caught below as P2003 → INVALID_REFERENCE.
+  if (
+    defaultScheduleId !== undefined &&
+    defaultScheduleId !== null &&
+    !isPositiveInt(defaultScheduleId)
+  ) {
+    return errorResponse(res, 400, "VALIDATION_ERROR", "defaultScheduleId must be a positive integer or null");
+  }
 
   const data: Record<string, unknown> = {};
   if (email !== undefined) data.email = email;
   if (name !== undefined) data.name = name;
   if (timeZone !== undefined) data.timeZone = timeZone;
   if (username !== undefined) data.username = username;
+  if (defaultScheduleId !== undefined) data.defaultScheduleId = defaultScheduleId;
 
   if (Object.keys(data).length === 0) {
     return errorResponse(res, 400, "VALIDATION_ERROR", "at least one field is required");
@@ -83,7 +112,7 @@ adminRouter.patch("/users/:id", async (req, res) => {
     const user = await prisma.user.update({
       where: { id },
       data,
-      select: { id: true, email: true, name: true, username: true, timeZone: true },
+      select: { id: true, email: true, name: true, username: true, timeZone: true, defaultScheduleId: true },
     });
     res.json({ status: "success", data: user });
   } catch (error: unknown) {
@@ -96,6 +125,7 @@ adminRouter.patch("/users/:id", async (req, res) => {
     if (code === "USERNAME_TAKEN") return errorResponse(res, 409, "USERNAME_TAKEN", "username already in use");
     const e = error as { code?: string; message?: string };
     if (e.code === "P2025") return errorResponse(res, 404, "NOT_FOUND", "user not found");
+    if (e.code === "P2003") return errorResponse(res, 400, "INVALID_REFERENCE", "defaultScheduleId references an unknown schedule");
     return internalError(req, res, error);
   }
 });
@@ -160,6 +190,13 @@ adminRouter.post("/schedules", async (req, res) => {
     return errorResponse(res, 400, "VALIDATION_ERROR", "timeZone must be a non-empty string ≤ 64 chars");
   if (!Array.isArray(availability) || availability.length === 0)
     return errorResponse(res, 400, "VALIDATION_ERROR", "availability must be a non-empty array");
+  if (!availability.every(isValidAvailabilityWindow))
+    return errorResponse(
+      res,
+      400,
+      "VALIDATION_ERROR",
+      "each availability window must have days (int 0-6), startTime HH:MM, endTime HH:MM, and startTime < endTime",
+    );
 
   try {
     const schedule = await prisma.$transaction(async (tx) => {
@@ -211,10 +248,29 @@ adminRouter.patch("/schedules/:id", async (req, res) => {
   if (name === undefined && timeZone === undefined && availability === undefined) {
     return errorResponse(res, 400, "VALIDATION_ERROR", "at least one field is required");
   }
-  if (name !== undefined && !isNonEmptyString(name))
-    return errorResponse(res, 400, "VALIDATION_ERROR", "name must be a non-empty string");
-  if (timeZone !== undefined && !isNonEmptyString(timeZone))
-    return errorResponse(res, 400, "VALIDATION_ERROR", "timeZone must be a non-empty string");
+  if (
+    name !== undefined &&
+    (!isNonEmptyString(name) || !withinMaxLength(name, FIELD_LIMITS.name))
+  ) {
+    return errorResponse(res, 400, "VALIDATION_ERROR", `name must be a non-empty string ≤ ${FIELD_LIMITS.name} chars`);
+  }
+  if (
+    timeZone !== undefined &&
+    (!isNonEmptyString(timeZone) || !withinMaxLength(timeZone, FIELD_LIMITS.timeZone))
+  ) {
+    return errorResponse(res, 400, "VALIDATION_ERROR", `timeZone must be a non-empty string ≤ ${FIELD_LIMITS.timeZone} chars`);
+  }
+  if (availability !== undefined) {
+    if (!Array.isArray(availability))
+      return errorResponse(res, 400, "VALIDATION_ERROR", "availability must be an array");
+    if (!availability.every(isValidAvailabilityWindow))
+      return errorResponse(
+        res,
+        400,
+        "VALIDATION_ERROR",
+        "each availability window must have days (int 0-6), startTime HH:MM, endTime HH:MM, and startTime < endTime",
+      );
+  }
 
   try {
     const schedule = await prisma.$transaction(async (tx) => {
@@ -349,10 +405,18 @@ adminRouter.patch("/event-types/:id", async (req, res) => {
 
   const { title, slug, length } = req.body || {};
 
-  if (title !== undefined && !isNonEmptyString(title))
-    return errorResponse(res, 400, "VALIDATION_ERROR", "title must be a non-empty string");
-  if (slug !== undefined && !isNonEmptyString(slug))
-    return errorResponse(res, 400, "VALIDATION_ERROR", "slug must be a non-empty string");
+  if (
+    title !== undefined &&
+    (!isNonEmptyString(title) || !withinMaxLength(title, FIELD_LIMITS.title))
+  ) {
+    return errorResponse(res, 400, "VALIDATION_ERROR", `title must be a non-empty string ≤ ${FIELD_LIMITS.title} chars`);
+  }
+  if (
+    slug !== undefined &&
+    (!isNonEmptyString(slug) || !withinMaxLength(slug, FIELD_LIMITS.slug))
+  ) {
+    return errorResponse(res, 400, "VALIDATION_ERROR", `slug must be a non-empty string ≤ ${FIELD_LIMITS.slug} chars`);
+  }
   if (length !== undefined && !isPositiveInt(length))
     return errorResponse(res, 400, "VALIDATION_ERROR", "length must be a positive integer");
 

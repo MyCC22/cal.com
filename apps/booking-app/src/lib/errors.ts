@@ -123,3 +123,52 @@ export const FIELD_LIMITS = {
   notes: 1000,
   reason: 1000,
 } as const;
+
+// Practical email format check — not full RFC 5322.
+// Rejects: "foo", "@x.com", "a b@c.com", "foo@bar..com" (consecutive dots),
+// "foo@.com" (leading dot in domain), "foo@bar" (no TLD).
+// Accepts all real-world emails.
+//
+// Structure: local@segment(.segment)+ where each domain segment has no
+// dots, no whitespace, and no @. The local part is lenient and allows
+// dots so "first.last@x.com" still validates.
+const EMAIL_RX = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
+
+export function isValidEmail(v: unknown): v is string {
+  return typeof v === "string" && EMAIL_RX.test(v);
+}
+
+// HH:MM 24-hour, zero-padded. Hours 00-23, minutes 00-59.
+const TIME_RX = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export type AvailabilityWindow = {
+  days: number[];
+  startTime: string;
+  endTime: string;
+};
+
+/**
+ * Validates an availability window shape. Rejects:
+ * - non-object / null
+ * - non-array or empty days
+ * - days containing non-integers, negatives, or values > 6
+ * - non-string startTime / endTime
+ * - time strings not matching HH:MM 24-hour format
+ * - startTime >= endTime (covers equality and overnight shifts;
+ *   consumers must split overnight coverage into two windows per the spec)
+ *
+ * Accepts (intentionally):
+ * - duplicate days within a single window (harmless; Prisma treats days as a set)
+ * - extra unknown fields on the window (handler maps only the 3 known fields)
+ */
+export function isValidAvailabilityWindow(w: unknown): w is AvailabilityWindow {
+  if (typeof w !== "object" || w === null) return false;
+  const x = w as { days?: unknown; startTime?: unknown; endTime?: unknown };
+  if (!Array.isArray(x.days) || x.days.length === 0) return false;
+  if (!x.days.every((d) => Number.isInteger(d) && (d as number) >= 0 && (d as number) <= 6)) return false;
+  if (typeof x.startTime !== "string" || !TIME_RX.test(x.startTime)) return false;
+  if (typeof x.endTime !== "string" || !TIME_RX.test(x.endTime)) return false;
+  // Lexicographic comparison works for zero-padded HH:MM.
+  if (x.startTime >= x.endTime) return false;
+  return true;
+}
