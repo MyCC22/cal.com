@@ -1,43 +1,48 @@
 // apps/booking-app/src/routes/admin.ts
 import { Router } from "express";
 import prisma from "../lib/prisma";
-import { errorResponse, parseId, uniqueViolationCode, isSerializationFailure, isNonEmptyString, isPositiveInt } from "../lib/errors";
+import { errorResponse, parseId, uniqueViolationCode, isSerializationFailure, isNonEmptyString, isPositiveInt, internalError, withinMaxLength, FIELD_LIMITS } from "../lib/errors";
 
 export const adminRouter = Router();
 
 // --- Users ---
 
 adminRouter.post("/users", async (req, res) => {
+  const { email, name, timeZone } = req.body || {};
+
+  if (!isNonEmptyString(email) || !withinMaxLength(email, FIELD_LIMITS.email))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "email is required (1–320 chars)");
+  if (!isNonEmptyString(name) || !withinMaxLength(name, FIELD_LIMITS.name))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "name is required (1–200 chars)");
+  if (timeZone !== undefined && (!isNonEmptyString(timeZone) || !withinMaxLength(timeZone, FIELD_LIMITS.timeZone)))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "timeZone must be a non-empty string ≤ 64 chars");
+
+  // M6: validate the local part of the email is safe to use as a username
+  const localPart = email.split("@")[0];
+  if (!/^[a-z0-9._-]+$/i.test(localPart))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "email local part must match /^[a-z0-9._-]+$/i");
+
   try {
-    const { email, name, timeZone } = req.body;
-
-    if (!email || !name) {
-      return res.status(400).json({
-        status: "error",
-        code: "VALIDATION_ERROR",
-        message: "email and name are required",
-      });
-    }
-
     const user = await prisma.user.create({
       data: {
         email,
         name,
-        username: email.split("@")[0],
+        username: localPart,
         timeZone: timeZone || "America/Los_Angeles",
         completedOnboarding: true,
       },
       select: { id: true, email: true, name: true, username: true, timeZone: true },
     });
-
     res.json({ status: "success", data: user });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "unknown error";
-    res.status(500).json({ status: "error", code: "INTERNAL_ERROR", message });
+    const code = uniqueViolationCode(error);
+    if (code === "EMAIL_TAKEN") return errorResponse(res, 409, "EMAIL_TAKEN", "email already in use");
+    if (code === "USERNAME_TAKEN") return errorResponse(res, 409, "USERNAME_TAKEN", "username already in use");
+    return internalError(req, res, error);
   }
 });
 
-adminRouter.get("/users", async (_req, res) => {
+adminRouter.get("/users", async (req, res) => {
   try {
     const users = await prisma.user.findMany({
       select: { id: true, email: true, name: true, username: true, timeZone: true },
@@ -45,8 +50,7 @@ adminRouter.get("/users", async (_req, res) => {
     });
     res.json({ status: "success", data: users });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "unknown error";
-    res.status(500).json({ status: "error", code: "INTERNAL_ERROR", message });
+    return internalError(req, res, error);
   }
 });
 
@@ -92,7 +96,7 @@ adminRouter.patch("/users/:id", async (req, res) => {
     if (code === "USERNAME_TAKEN") return errorResponse(res, 409, "USERNAME_TAKEN", "username already in use");
     const e = error as { code?: string; message?: string };
     if (e.code === "P2025") return errorResponse(res, 404, "NOT_FOUND", "user not found");
-    return errorResponse(res, 500, "INTERNAL_ERROR", e.message || "unknown error");
+    return internalError(req, res, error);
   }
 });
 
@@ -139,25 +143,25 @@ adminRouter.delete("/users/:id", async (req, res) => {
       res.set("Retry-After", "1");
       return errorResponse(res, 503, "SERIALIZATION_FAILURE", "database contention; please retry");
     }
-    const e = error as { message?: string };
-    return errorResponse(res, 500, "INTERNAL_ERROR", e.message || "unknown error");
+    return internalError(req, res, error);
   }
 });
 
 // --- Schedules ---
 
 adminRouter.post("/schedules", async (req, res) => {
+  const { userId, name, timeZone, availability } = req.body || {};
+
+  if (!isPositiveInt(userId))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "userId must be a positive integer");
+  if (!isNonEmptyString(name) || !withinMaxLength(name, FIELD_LIMITS.name))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "name is required (1–200 chars)");
+  if (timeZone !== undefined && (!isNonEmptyString(timeZone) || !withinMaxLength(timeZone, FIELD_LIMITS.timeZone)))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "timeZone must be a non-empty string ≤ 64 chars");
+  if (!Array.isArray(availability) || availability.length === 0)
+    return errorResponse(res, 400, "VALIDATION_ERROR", "availability must be a non-empty array");
+
   try {
-    const { userId, name, timeZone, availability } = req.body;
-
-    if (!userId || !name || !availability?.length) {
-      return res.status(400).json({
-        status: "error",
-        code: "VALIDATION_ERROR",
-        message: "userId, name, and availability are required",
-      });
-    }
-
     const schedule = await prisma.$transaction(async (tx) => {
       const s = await tx.schedule.create({
         data: {
@@ -174,24 +178,17 @@ adminRouter.post("/schedules", async (req, res) => {
         },
         include: { availability: true },
       });
-
       // Set as user's default schedule (atomic with creation)
-      await tx.user.update({
-        where: { id: userId },
-        data: { defaultScheduleId: s.id },
-      });
-
+      await tx.user.update({ where: { id: userId }, data: { defaultScheduleId: s.id } });
       return s;
     });
-
     res.json({ status: "success", data: { id: schedule.id, name: schedule.name, timeZone: schedule.timeZone } });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "unknown error";
-    res.status(500).json({ status: "error", code: "INTERNAL_ERROR", message });
+    return internalError(req, res, error);
   }
 });
 
-adminRouter.get("/schedules", async (_req, res) => {
+adminRouter.get("/schedules", async (req, res) => {
   try {
     const schedules = await prisma.schedule.findMany({
       select: {
@@ -202,8 +199,7 @@ adminRouter.get("/schedules", async (_req, res) => {
     });
     res.json({ status: "success", data: schedules });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "unknown error";
-    res.status(500).json({ status: "error", code: "INTERNAL_ERROR", message });
+    return internalError(req, res, error);
   }
 });
 
@@ -262,8 +258,7 @@ adminRouter.patch("/schedules/:id", async (req, res) => {
       res.set("Retry-After", "1");
       return errorResponse(res, 503, "SERIALIZATION_FAILURE", "database contention; please retry");
     }
-    const e = error as { message?: string };
-    return errorResponse(res, 500, "INTERNAL_ERROR", e.message || "unknown error");
+    return internalError(req, res, error);
   }
 });
 
@@ -296,46 +291,44 @@ adminRouter.delete("/schedules/:id", async (req, res) => {
       res.set("Retry-After", "1");
       return errorResponse(res, 503, "SERIALIZATION_FAILURE", "database contention; please retry");
     }
-    const e = error as { message?: string };
-    return errorResponse(res, 500, "INTERNAL_ERROR", e.message || "unknown error");
+    return internalError(req, res, error);
   }
 });
 
 // --- Event Types ---
 
 adminRouter.post("/event-types", async (req, res) => {
+  const { title, slug, length, userId } = req.body || {};
+
+  if (!isNonEmptyString(title) || !withinMaxLength(title, FIELD_LIMITS.title))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "title is required (1–200 chars)");
+  if (!isNonEmptyString(slug) || !withinMaxLength(slug, FIELD_LIMITS.slug))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "slug is required (1–200 chars)");
+  if (!isPositiveInt(length))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "length must be a positive integer");
+  if (!isPositiveInt(userId))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "userId must be a positive integer");
+
   try {
-    const { title, slug, length, userId } = req.body;
-
-    if (!title || !slug || !length || !userId) {
-      return res.status(400).json({
-        status: "error",
-        code: "VALIDATION_ERROR",
-        message: "title, slug, length, and userId are required",
-      });
-    }
-
     const eventType = await prisma.eventType.create({
       data: {
         title,
         slug,
         length,
         userId,
-        hosts: {
-          create: { userId, isFixed: true },
-        },
+        hosts: { create: { userId, isFixed: true } },
       },
       select: { id: true, title: true, slug: true, length: true, userId: true },
     });
-
     res.json({ status: "success", data: eventType });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "unknown error";
-    res.status(500).json({ status: "error", code: "INTERNAL_ERROR", message });
+    const code = uniqueViolationCode(error);
+    if (code === "SLUG_TAKEN") return errorResponse(res, 409, "SLUG_TAKEN", "slug already in use for this user");
+    return internalError(req, res, error);
   }
 });
 
-adminRouter.get("/event-types", async (_req, res) => {
+adminRouter.get("/event-types", async (req, res) => {
   try {
     const eventTypes = await prisma.eventType.findMany({
       select: {
@@ -346,8 +339,7 @@ adminRouter.get("/event-types", async (_req, res) => {
     });
     res.json({ status: "success", data: eventTypes });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "unknown error";
-    res.status(500).json({ status: "error", code: "INTERNAL_ERROR", message });
+    return internalError(req, res, error);
   }
 });
 
@@ -389,7 +381,7 @@ adminRouter.patch("/event-types/:id", async (req, res) => {
     if (code === "SLUG_TAKEN") return errorResponse(res, 409, "SLUG_TAKEN", "slug already in use for this user");
     const e = error as { code?: string; message?: string };
     if (e.code === "P2025") return errorResponse(res, 404, "NOT_FOUND", "event type not found");
-    return errorResponse(res, 500, "INTERNAL_ERROR", e.message || "unknown error");
+    return internalError(req, res, error);
   }
 });
 
@@ -426,7 +418,6 @@ adminRouter.delete("/event-types/:id", async (req, res) => {
       res.set("Retry-After", "1");
       return errorResponse(res, 503, "SERIALIZATION_FAILURE", "database contention; please retry");
     }
-    const e = error as { message?: string };
-    return errorResponse(res, 500, "INTERNAL_ERROR", e.message || "unknown error");
+    return internalError(req, res, error);
   }
 });

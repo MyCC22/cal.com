@@ -3,21 +3,23 @@ import { Router } from "express";
 import { v4 as uuidv4 } from "uuid";
 import dayjs from "@calcom/dayjs";
 import prisma from "../lib/prisma";
+import { errorResponse, internalError, withinMaxLength, isNonEmptyString, FIELD_LIMITS } from "../lib/errors";
 
 export const bookingsRouter = Router();
 
 // POST /api/v1/bookings — Create a booking
 bookingsRouter.post("/", async (req, res) => {
   try {
-    const { eventTypeId, start, name, email, timeZone, notes } = req.body;
+    const { eventTypeId, start, name, email, timeZone, notes } = req.body || {};
 
-    if (!eventTypeId || !start || !name || !email || !timeZone) {
-      return res.status(400).json({
-        status: "error",
-        code: "VALIDATION_ERROR",
-        message: "eventTypeId, start, name, email, and timeZone are required",
-      });
-    }
+    if (!eventTypeId || !start || !timeZone)
+      return errorResponse(res, 400, "VALIDATION_ERROR", "eventTypeId, start, and timeZone are required");
+    if (!isNonEmptyString(name) || !withinMaxLength(name, FIELD_LIMITS.name))
+      return errorResponse(res, 400, "VALIDATION_ERROR", `name is required (1–${FIELD_LIMITS.name} chars)`);
+    if (!isNonEmptyString(email) || !withinMaxLength(email, FIELD_LIMITS.email))
+      return errorResponse(res, 400, "VALIDATION_ERROR", `email is required (1–${FIELD_LIMITS.email} chars)`);
+    if (notes !== undefined && !withinMaxLength(notes, FIELD_LIMITS.notes))
+      return errorResponse(res, 400, "VALIDATION_ERROR", `notes exceeds ${FIELD_LIMITS.notes} chars`);
 
     // Fetch event type
     const eventType = await prisma.eventType.findUnique({
@@ -90,7 +92,7 @@ bookingsRouter.post("/", async (req, res) => {
         message: "The requested time slot is no longer available",
       });
     }
-    res.status(500).json({ status: "error", code: "INTERNAL_ERROR", message });
+    return internalError(req, res, error);
   }
 });
 
@@ -117,13 +119,14 @@ bookingsRouter.get("/:uid", async (req, res) => {
 
     res.json({ status: "success", data: booking });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "unknown error";
-    res.status(500).json({ status: "error", code: "INTERNAL_ERROR", message });
+    return internalError(req, res, error);
   }
 });
 
 // POST /api/v1/bookings/:uid/cancel — Cancel a booking
 bookingsRouter.post("/:uid/cancel", async (req, res) => {
+  if (req.body?.reason !== undefined && !withinMaxLength(req.body.reason, FIELD_LIMITS.reason))
+    return errorResponse(res, 400, "VALIDATION_ERROR", `reason exceeds ${FIELD_LIMITS.reason} chars`);
   try {
     const booking = await prisma.booking.findUnique({
       where: { uid: req.params.uid },
@@ -149,8 +152,7 @@ bookingsRouter.post("/:uid/cancel", async (req, res) => {
 
     res.json({ status: "success", data: updated });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "unknown error";
-    res.status(500).json({ status: "error", code: "INTERNAL_ERROR", message });
+    return internalError(req, res, error);
   }
 });
 
@@ -243,6 +245,6 @@ bookingsRouter.post("/:uid/reschedule", async (req, res) => {
         message: "The requested time slot is no longer available",
       });
     }
-    res.status(500).json({ status: "error", code: "INTERNAL_ERROR", message });
+    return internalError(req, res, error);
   }
 });
