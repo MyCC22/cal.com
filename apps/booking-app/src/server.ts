@@ -18,7 +18,11 @@ validateConfig(); // exits process in prod if keys missing
 const app = express();
 const port = parseInt(process.env.PORT || "3100", 10);
 
-app.set("trust proxy", 1); // REQUIRED for Railway proxy + rate limit
+// Railway runs behind multiple proxy hops (edge → router → app). Setting
+// trust proxy to a single hop count leaves req.ip pointing at one of the
+// rotating router IPs, which makes rate limiting useless. Trust all proxies
+// so express picks the leftmost X-Forwarded-For value (the real client).
+app.set("trust proxy", true);
 app.use(helmet({
   contentSecurityPolicy: false,
   crossOriginResourcePolicy: false,
