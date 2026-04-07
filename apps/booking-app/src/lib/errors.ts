@@ -17,13 +17,27 @@ export function errorResponse(
 }
 
 /**
- * Strict integer ID parser. Rejects "1.5", "1abc", negatives, zero.
- * parseInt is too lenient — it accepts those.
+ * Strict integer ID parser.
+ * Rejects: "1.5", "1abc", "01", "1e2", "0x10", " 5 ", negatives, zero,
+ * and values exceeding Postgres int4 max (2,147,483,647).
+ * Returns null on any malformed input — caller should respond with 400.
  */
 export function parseId(raw: string): number | null {
+  // Digits only, no leading zero, no scientific notation, no whitespace.
+  if (!/^[1-9]\d*$/.test(raw)) return null;
   const n = Number(raw);
-  if (!Number.isInteger(n) || n <= 0) return null;
+  if (!Number.isInteger(n) || n <= 0 || n > 2147483647) return null;
   return n;
+}
+
+/** True if value is a non-empty, non-whitespace string. */
+export function isNonEmptyString(v: unknown): v is string {
+  return typeof v === "string" && v.trim().length > 0;
+}
+
+/** True if value is a positive integer (rejects 0, negatives, floats, non-numbers). */
+export function isPositiveInt(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v > 0;
 }
 
 /**

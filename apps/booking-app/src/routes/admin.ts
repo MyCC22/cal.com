@@ -1,7 +1,7 @@
 // apps/booking-app/src/routes/admin.ts
 import { Router } from "express";
 import prisma from "../lib/prisma";
-import { errorResponse, parseId, uniqueViolationCode, isSerializationFailure } from "../lib/errors";
+import { errorResponse, parseId, uniqueViolationCode, isSerializationFailure, isNonEmptyString, isPositiveInt } from "../lib/errors";
 
 export const adminRouter = Router();
 
@@ -55,6 +55,16 @@ adminRouter.patch("/users/:id", async (req, res) => {
   if (id === null) return errorResponse(res, 400, "VALIDATION_ERROR", "id must be a positive integer");
 
   const { email, name, timeZone, username } = req.body || {};
+
+  if (email !== undefined && !isNonEmptyString(email))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "email must be a non-empty string");
+  if (name !== undefined && !isNonEmptyString(name))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "name must be a non-empty string");
+  if (timeZone !== undefined && !isNonEmptyString(timeZone))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "timeZone must be a non-empty string");
+  if (username !== undefined && !isNonEmptyString(username))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "username must be a non-empty string");
+
   const data: Record<string, unknown> = {};
   if (email !== undefined) data.email = email;
   if (name !== undefined) data.name = name;
@@ -205,6 +215,10 @@ adminRouter.patch("/schedules/:id", async (req, res) => {
   if (name === undefined && timeZone === undefined && availability === undefined) {
     return errorResponse(res, 400, "VALIDATION_ERROR", "at least one field is required");
   }
+  if (name !== undefined && !isNonEmptyString(name))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "name must be a non-empty string");
+  if (timeZone !== undefined && !isNonEmptyString(timeZone))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "timeZone must be a non-empty string");
 
   try {
     const schedule = await prisma.$transaction(async (tx) => {
@@ -342,6 +356,14 @@ adminRouter.patch("/event-types/:id", async (req, res) => {
   if (id === null) return errorResponse(res, 400, "VALIDATION_ERROR", "id must be a positive integer");
 
   const { title, slug, length } = req.body || {};
+
+  if (title !== undefined && !isNonEmptyString(title))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "title must be a non-empty string");
+  if (slug !== undefined && !isNonEmptyString(slug))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "slug must be a non-empty string");
+  if (length !== undefined && !isPositiveInt(length))
+    return errorResponse(res, 400, "VALIDATION_ERROR", "length must be a positive integer");
+
   const data: Record<string, unknown> = {};
   if (title !== undefined) data.title = title;
   if (slug !== undefined) data.slug = slug;
