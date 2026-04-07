@@ -1,5 +1,5 @@
 // apps/booking-app/src/lib/errors.ts
-import type { Response } from "express";
+import type { Request, Response } from "express";
 
 export function errorResponse(
   res: Response,
@@ -88,3 +88,38 @@ export function isSerializationFailure(error: unknown): boolean {
   const e = error as { code?: string };
   return e.code === "P2034";
 }
+
+/**
+ * Logs the full error server-side with the request id, returns a sanitized
+ * envelope that never leaks Prisma/SQL/connection details to the client.
+ * Replaces every `res.status(500).json({ message: error.message })` pattern.
+ */
+export function internalError(req: Request, res: Response, error: unknown) {
+  const id = (req as Request & { requestId?: string }).requestId || "unknown";
+  // eslint-disable-next-line no-console
+  console.error(`[${id}] internal error:`, error);
+  return errorResponse(res, 500, "INTERNAL_ERROR", "An internal error occurred", { requestId: id });
+}
+
+/**
+ * Validates a string field is at most `max` characters. Returns true if valid.
+ * Caller is responsible for sending the 400 if false.
+ */
+export function withinMaxLength(value: unknown, max: number): boolean {
+  return typeof value === "string" && value.length <= max;
+}
+
+/**
+ * Field length caps for request bodies. Centralized so values stay consistent
+ * across POST/PATCH/booking handlers.
+ */
+export const FIELD_LIMITS = {
+  email: 320,    // RFC 5321
+  name: 200,
+  username: 64,
+  timeZone: 64,
+  title: 200,
+  slug: 200,
+  notes: 1000,
+  reason: 1000,
+} as const;
