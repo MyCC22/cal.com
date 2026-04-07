@@ -91,6 +91,14 @@ adminRouter.patch("/users/:id", async (req, res) => {
   // cal.com's schema declares `defaultScheduleId Int?` WITHOUT a Prisma
   // @relation, so Postgres has no foreign key constraint and unknown IDs
   // are silently accepted. We add an explicit existence check here.
+  //
+  // TOCTOU: there is a narrow race between the findUnique below and the
+  // update further down — a concurrent request could delete the schedule
+  // in between. Worst case is a stale pointer (non-existent schedule id)
+  // which is the same terminal state as "schedule deleted after update",
+  // so this race doesn't introduce any new invariant violation. If this
+  // becomes a concern, wrap the check + update in a Serializable
+  // transaction like the other mutation handlers.
   if (
     defaultScheduleId !== undefined &&
     defaultScheduleId !== null &&
@@ -136,6 +144,10 @@ adminRouter.patch("/users/:id", async (req, res) => {
     if (code === "USERNAME_TAKEN") return errorResponse(res, 409, "USERNAME_TAKEN", "username already in use");
     const e = error as { code?: string; message?: string };
     if (e.code === "P2025") return errorResponse(res, 404, "NOT_FOUND", "user not found");
+    // Defense-in-depth: this branch is dead today because cal.com's schema
+    // has no FK @relation on User.defaultScheduleId (see explicit findUnique
+    // above). Kept intentionally so if a future schema migration adds the
+    // relation, FK violations surface as a clean 400 instead of a 500.
     if (e.code === "P2003") return errorResponse(res, 400, "INVALID_REFERENCE", "defaultScheduleId references an unknown schedule");
     return internalError(req, res, error);
   }
