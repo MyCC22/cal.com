@@ -33,14 +33,21 @@ export function parseId(raw: string): number | null {
  */
 export function uniqueViolationCode(error: unknown): string | null {
   if (typeof error !== "object" || error === null) return null;
-  const e = error as { code?: string; meta?: { target?: string[] | string } };
-  if (e.code !== "P2002") return null;
+  const e = error as { code?: string; message?: string; meta?: { target?: string[] | string } };
+  // P2002 is the canonical Prisma unique-violation code, but some Prisma
+  // versions wrap the error so e.code is not present at the top level.
+  // Fall back to message-string sniffing for "Unique constraint failed".
+  const isUnique = e.code === "P2002" || /Unique constraint failed/i.test(e.message || "");
+  if (!isUnique) return null;
   const target = Array.isArray(e.meta?.target)
     ? e.meta!.target.join(",")
     : (e.meta?.target as string | undefined) || "";
-  if (target.includes("slug")) return "SLUG_TAKEN";
-  if (target.includes("email")) return "EMAIL_TAKEN";
-  if (target.includes("username")) return "USERNAME_TAKEN";
+  // Check meta first, then fall back to scanning the message text
+  // (some wrappers strip meta.target).
+  const haystack = (target + " " + (e.message || "")).toLowerCase();
+  if (haystack.includes("slug")) return "SLUG_TAKEN";
+  if (haystack.includes("email")) return "EMAIL_TAKEN";
+  if (haystack.includes("username")) return "USERNAME_TAKEN";
   return null;
 }
 
