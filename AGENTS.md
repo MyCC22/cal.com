@@ -242,3 +242,59 @@ For detailed information, see the `agents/` directory:
 - **[agents/rules/](agents/rules/)** - Modular engineering rules
 - **[agents/commands.md](agents/commands.md)** - Complete command reference
 - **[agents/knowledge-base.md](agents/knowledge-base.md)** - Domain knowledge and business rules
+
+---
+
+## Booking App (apps/booking-app/)
+
+Custom Express.js API layer for multi-tenant appointment scheduling, importing @calcom/* packages directly.
+
+### Project Info
+- **GitHub**: MyCC22/cal.com (forked from calcom/cal.com)
+- **Framework**: Express.js (TypeScript, compiled with tsc)
+- **Port**: 3100
+
+### Infrastructure
+
+**Railway (Deployment)**
+- Project: proactive-enjoyment
+- Project ID: f69211a4-d49b-484e-94c9-c3df9b7f4dc6
+- Service ID: ba454ce7-b0e4-4e36-9b40-5a62d27345f6
+- URL: https://web-production-a086d.up.railway.app
+- Region: us-west2
+- Build: Dockerfile at `apps/booking-app/Dockerfile`
+
+**Supabase (Database)**
+- Project: Cal_Scheduler
+- Project ID: lsbdaqnveqqwbvednrra
+- Region: us-west-2
+- Host: db.lsbdaqnveqqwbvednrra.supabase.co
+- Pooler: aws-0-us-west-2.pooler.supabase.com:6543
+
+**Upstash (Redis)**
+- URL: https://secure-jackass-90921.upstash.io
+
+### Key Environment Variables (set in Railway)
+- DATABASE_URL (Supabase pooled connection)
+- DATABASE_DIRECT_URL (Supabase direct connection)
+- NEXTAUTH_SECRET
+- CALENDSO_ENCRYPTION_KEY
+- UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN
+- PORT=3100
+- NODE_ENV=production
+
+### Architecture
+- `apps/booking-app/src/server.ts` — Express.js entry point
+- `apps/booking-app/src/routes/` — API route handlers
+- Imports @calcom/prisma, @calcom/features, @calcom/lib at runtime
+
+### Current Status
+- **Phase 5c complete** — test framework live (84 tests passing across 6 files in 2.5s via vitest + supertest + mocked Prisma), DELETE /users?cascade=true added with atomic serializable-tx cleanup, PATCH /users defaultScheduleId TOCTOU closed by wrapping check+update in serializable tx
+- Phase 5b: HiTimmy gap fixes — defaultScheduleId field in PATCH /users, length caps on all PATCH string fields, isValidAvailabilityWindow validator, isValidEmail format check
+- Phase 5a: security hardening — fail-closed auth, helmet headers, CORS allow-list, rate limiting (60/min global, 10/min writes), sanitized 500s with request IDs, request size cap at 16KB, validateConfig exits in prod if keys missing
+- Phase 4: admin PATCH/DELETE endpoints (users, schedules, event-types) with load-bearing cascade-loss guards
+- Phase 3: public booking API — slots + create/get/cancel/reschedule bookings
+- Phase 2: @calcom/prisma + @calcom/features runtime imports via tsx; all Prisma migrations applied
+- Health endpoint: GET /api/health → 200 (unauthenticated, unrate-limited)
+- Live at https://web-production-a086d.up.railway.app
+- Local tests: `yarn workspace booking-app test` → 84/84 passing
