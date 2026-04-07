@@ -90,30 +90,13 @@ adminRouter.patch("/users/:id", async (req, res) => {
   // defaultScheduleId: null clears the pointer; a positive integer sets it.
   // cal.com's schema declares `defaultScheduleId Int?` WITHOUT a Prisma
   // @relation, so Postgres has no foreign key constraint and unknown IDs
-  // are silently accepted. We add an explicit existence check here.
-  //
-  // TOCTOU: there is a narrow race between the findUnique below and the
-  // update further down — a concurrent request could delete the schedule
-  // in between. Worst case is a stale pointer (non-existent schedule id)
-  // which is the same terminal state as "schedule deleted after update",
-  // so this race doesn't introduce any new invariant violation. If this
-  // becomes a concern, wrap the check + update in a Serializable
-  // transaction like the other mutation handlers.
+  // would be silently accepted without an explicit check.
   if (
     defaultScheduleId !== undefined &&
     defaultScheduleId !== null &&
     !isPositiveInt(defaultScheduleId)
   ) {
     return errorResponse(res, 400, "VALIDATION_ERROR", "defaultScheduleId must be a positive integer or null");
-  }
-  if (typeof defaultScheduleId === "number") {
-    const exists = await prisma.schedule.findUnique({
-      where: { id: defaultScheduleId },
-      select: { id: true },
-    });
-    if (!exists) {
-      return errorResponse(res, 400, "INVALID_REFERENCE", "defaultScheduleId references an unknown schedule");
-    }
   }
 
   const data: Record<string, unknown> = {};
@@ -128,12 +111,36 @@ adminRouter.patch("/users/:id", async (req, res) => {
   }
 
   try {
-    const user = await prisma.user.update({
-      where: { id },
-      data,
-      select: { id: true, email: true, name: true, username: true, timeZone: true, defaultScheduleId: true },
-    });
-    res.json({ status: "success", data: user });
+    // TOCTOU fix: existence check + update run in the same serializable
+    // transaction. Discriminated-union return avoids string-sniffing the
+    // error path (matches the pattern used by DELETE /users).
+    const result = await prisma.$transaction(async (tx) => {
+      if (typeof defaultScheduleId === "number") {
+        const exists = await tx.schedule.findUnique({
+          where: { id: defaultScheduleId },
+          select: { id: true },
+        });
+        if (!exists) return { invalidRef: true as const };
+      }
+      const user = await tx.user.update({
+        where: { id },
+        data,
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          username: true,
+          timeZone: true,
+          defaultScheduleId: true,
+        },
+      });
+      return { user };
+    }, { isolationLevel: "Serializable" });
+
+    if ("invalidRef" in result) {
+      return errorResponse(res, 400, "INVALID_REFERENCE", "defaultScheduleId references an unknown schedule");
+    }
+    res.json({ status: "success", data: result.user });
   } catch (error: unknown) {
     if (isSerializationFailure(error)) {
       res.set("Retry-After", "1");
@@ -145,40 +152,68 @@ adminRouter.patch("/users/:id", async (req, res) => {
     const e = error as { code?: string; message?: string };
     if (e.code === "P2025") return errorResponse(res, 404, "NOT_FOUND", "user not found");
     // Defense-in-depth: this branch is dead today because cal.com's schema
-    // has no FK @relation on User.defaultScheduleId (see explicit findUnique
-    // above). Kept intentionally so if a future schema migration adds the
-    // relation, FK violations surface as a clean 400 instead of a 500.
+    // has no FK @relation on User.defaultScheduleId (we check explicitly
+    // inside the tx above). Kept intentionally so if a future schema
+    // migration adds the relation, FK violations surface as a clean 400
+    // instead of a 500.
     if (e.code === "P2003") return errorResponse(res, 400, "INVALID_REFERENCE", "defaultScheduleId references an unknown schedule");
     return internalError(req, res, error);
   }
 });
 
 // ⚠️ Load-bearing: cal.com schema declares Booking.user as onDelete: Cascade.
-// Without this dependency check, deleting a user silently erases ALL their
-// booking history (including completed and cancelled). Do not remove.
+// Without the dependency check below, deleting a user silently erases ALL
+// their booking history (including completed and cancelled). The default
+// path preserves this guard. The ?cascade=true path is opt-in and
+// pre-cancels bookings to keep history as CANCELLED rows before the user
+// delete cascades them.
 adminRouter.delete("/users/:id", async (req, res) => {
   const id = parseId(req.params.id);
   if (id === null) return errorResponse(res, 400, "VALIDATION_ERROR", "id must be a positive integer");
+
+  // Coerce the cascade query parameter. Express's `qs` parser can return
+  // string | string[] | ParsedQs | ParsedQs[] | undefined, so we narrow
+  // through a typeof check to stay fail-closed against nested/object
+  // forms like `?cascade[key]=true`. Only literal string "true" opts in.
+  const rawCascade = req.query.cascade;
+  const cascadeStr =
+    typeof rawCascade === "string"
+      ? rawCascade
+      : Array.isArray(rawCascade) && typeof rawCascade[0] === "string"
+        ? rawCascade[0]
+        : undefined;
+  const cascade = cascadeStr === "true";
 
   try {
     const result = await prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({ where: { id }, select: { id: true } });
       if (!user) return { notFound: true as const };
 
-      // NOTE: We also count Host rows where userId = :id. Today this is
-      // covered transitively by `eventTypes` (POST /event-types only creates
-      // self-hosts), but checking explicitly future-proofs against any
-      // future code path that lets a user be a host on event types they
-      // don't own.
-      const [bookings, schedules, eventTypes, hosts] = await Promise.all([
-        tx.booking.count({ where: { userId: id, status: { not: "CANCELLED" } } }),
-        tx.schedule.count({ where: { userId: id } }),
-        tx.eventType.count({ where: { userId: id } }),
-        tx.host.count({ where: { userId: id } }),
-      ]);
-
-      if (bookings + schedules + eventTypes + hosts > 0) {
-        return { blockers: { bookings, schedules, eventTypes, hosts } };
+      if (!cascade) {
+        // DEFAULT PATH — Host rows counted explicitly as defense-in-depth
+        // against any future code that lets a user be a host on event types
+        // they don't own (today transitively covered by eventTypes).
+        const [bookings, schedules, eventTypes, hosts] = await Promise.all([
+          tx.booking.count({ where: { userId: id, status: { not: "CANCELLED" } } }),
+          tx.schedule.count({ where: { userId: id } }),
+          tx.eventType.count({ where: { userId: id } }),
+          tx.host.count({ where: { userId: id } }),
+        ]);
+        if (bookings + schedules + eventTypes + hosts > 0) {
+          return { blockers: { bookings, schedules, eventTypes, hosts } };
+        }
+      } else {
+        // CASCADE PATH — opt-in only. Atomic inside serializable transaction.
+        // Order matters: cancel bookings → repoint → delete children → delete user.
+        // See phase 5c spec §"C2 — Cascade delete design" for the full rationale.
+        await tx.booking.updateMany({
+          where: { userId: id, status: { not: "CANCELLED" } },
+          data: { status: "CANCELLED", cancellationReason: "user deleted via cascade" },
+        });
+        await tx.user.update({ where: { id }, data: { defaultScheduleId: null } });
+        await tx.eventType.deleteMany({ where: { userId: id } });
+        await tx.schedule.deleteMany({ where: { userId: id } });
+        await tx.host.deleteMany({ where: { userId: id } });
       }
 
       await tx.user.delete({ where: { id } });
@@ -190,7 +225,7 @@ adminRouter.delete("/users/:id", async (req, res) => {
       return errorResponse(res, 409, "HAS_DEPENDENCIES",
         "Cannot delete user with active dependencies", { blockers: result.blockers });
     }
-    res.json({ status: "success", data: { deleted: true, id } });
+    res.json({ status: "success", data: { deleted: true, id, cascaded: cascade } });
   } catch (error: unknown) {
     if (isSerializationFailure(error)) {
       res.set("Retry-After", "1");
