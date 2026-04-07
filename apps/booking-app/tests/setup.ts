@@ -17,6 +17,10 @@ process.env.CORS_ORIGINS = "http://test";
 // exports the MockPrisma *type* for use in handler code (types erase at
 // runtime so there's no TDZ issue on the type-only import above).
 const { mockPrisma } = vi.hoisted(() => {
+  // Every model method we call in handlers needs a stub. If a handler
+  // ever reaches a method not in this list, the mock returns undefined
+  // where real Prisma would throw — that's a silent-pass-through footgun.
+  // Keep this in sync with the shape in tests/helpers/mockPrisma.ts.
   const makeModel = () => ({
     create: vi.fn(),
     update: vi.fn(),

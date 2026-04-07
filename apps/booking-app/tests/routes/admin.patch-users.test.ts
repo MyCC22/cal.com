@@ -111,6 +111,60 @@ describe("PATCH /api/admin/users/:id", () => {
       expect(res.body.code).toBe("INVALID_REFERENCE");
       expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
+    it("TOCTOU invariant: schedule.findUnique must run INSIDE the $transaction callback", async () => {
+      // This test catches the regression where a future refactor moves
+      // the existence check back outside the transaction, re-opening
+      // the TOCTOU race. It uses a scoped flag flipped by the
+      // $transaction mock implementation: findUnique records whether
+      // the tx callback was already running when it was called. If the
+      // handler calls findUnique BEFORE entering $transaction, the flag
+      // is false and the test fails loudly.
+      let insideTx = false;
+      let findUniqueCalledOutsideTx = false;
+      let findUniqueCalledInsideTx = false;
+
+      mockPrisma.$transaction.mockImplementation(async (cbOrOps: unknown) => {
+        if (typeof cbOrOps === "function") {
+          insideTx = true;
+          try {
+            return await (cbOrOps as (tx: unknown) => Promise<unknown>)(mockPrisma);
+          } finally {
+            insideTx = false;
+          }
+        }
+        return cbOrOps;
+      });
+
+      mockPrisma.schedule.findUnique.mockImplementation(async () => {
+        if (insideTx) findUniqueCalledInsideTx = true;
+        else findUniqueCalledOutsideTx = true;
+        return { id: 5 };
+      });
+      mockPrisma.user.update.mockResolvedValue({
+        id: 1, email: "a@b.com", name: "A", username: "a", timeZone: "UTC", defaultScheduleId: 5,
+      });
+
+      const res = await request(makeApp())
+        .patch("/api/admin/users/1")
+        .set("x-admin-key", KEY)
+        .send({ defaultScheduleId: 5 });
+      expect(res.status).toBe(200);
+
+      // The load-bearing assertions: findUnique MUST happen inside the tx
+      // and MUST NOT happen outside it. A regression that moves the check
+      // out of the $transaction callback flips both flags.
+      expect(findUniqueCalledInsideTx).toBe(true);
+      expect(findUniqueCalledOutsideTx).toBe(false);
+
+      // Exactly one $transaction call for the whole PATCH, with
+      // Serializable isolation requested.
+      expect(mockPrisma.$transaction).toHaveBeenCalledOnce();
+      const [_callback, options] = mockPrisma.$transaction.mock.calls[0] as [
+        unknown,
+        { isolationLevel?: string } | undefined,
+      ];
+      expect(options?.isolationLevel).toBe("Serializable");
+    });
     it("rejects non-integer string with 400 VALIDATION_ERROR", async () => {
       const res = await request(makeApp())
         .patch("/api/admin/users/1")

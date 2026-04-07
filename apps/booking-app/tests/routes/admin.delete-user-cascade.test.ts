@@ -87,7 +87,16 @@ describe("DELETE /api/admin/users/:id", () => {
       expect(res.status).toBe(200);
       expect(res.body.data.cascaded).toBe(true);
     });
-    it("returns 500 via internalError when a mid-cascade step throws", async () => {
+    // NOTE ON SCOPE: this test verifies the *handler* response path when
+    // a cascade step throws — it asserts that user.delete is never
+    // reached and that the envelope surfaces as 500 INTERNAL_ERROR with
+    // a request id. It does NOT verify that the earlier booking.updateMany
+    // or user.update mutations were rolled back at the database layer,
+    // because the mock $transaction in setup.ts simply invokes the callback
+    // — there's no real Postgres rollback semantics in the mock. The
+    // atomicity invariant from the spec (§"C2 — Cascade delete design",
+    // invariant 2) is covered by Railway smoke tests against a real DB.
+    it("handler returns 500 via internalError when a mid-cascade step throws (atomicity covered by Railway smoke, not this mock)", async () => {
       mockPrisma.user.findUnique.mockResolvedValue({ id: 1 });
       mockPrisma.booking.updateMany.mockResolvedValue({ count: 0 });
       mockPrisma.user.update.mockResolvedValue({ id: 1, defaultScheduleId: null });

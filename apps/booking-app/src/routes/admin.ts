@@ -114,6 +114,11 @@ adminRouter.patch("/users/:id", async (req, res) => {
     // TOCTOU fix: existence check + update run in the same serializable
     // transaction. Discriminated-union return avoids string-sniffing the
     // error path (matches the pattern used by DELETE /users).
+    //
+    // This invariant — findUnique running INSIDE the tx — is verified by
+    // `tests/routes/admin.patch-users.test.ts > "TOCTOU invariant"`.
+    // If that test starts failing, do NOT move the findUnique out; the
+    // race it closes is real.
     const result = await prisma.$transaction(async (tx) => {
       if (typeof defaultScheduleId === "number") {
         const exists = await tx.schedule.findUnique({
